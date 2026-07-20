@@ -127,6 +127,14 @@ require_role(['operator']);
   .badge.belum{background:var(--amber-bg);color:var(--amber);}
   .mono-cell{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--text-muted);}
   .empty-hint{padding:2.5rem;text-align:center;color:var(--text-dim);font-size:13px;}
+
+  .toast{
+    position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-20px);
+    background:var(--green);color:#fff;padding:12px 22px;border-radius:8px;
+    font-size:13.5px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,0.15);
+    opacity:0;pointer-events:none;transition:opacity .25s, transform .25s;z-index:1000;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
   .chev{color:var(--text-dim);}
 
   .detail-row td{background:#FAFBFC;padding:0;}
@@ -156,6 +164,8 @@ require_role(['operator']);
 </head>
 <body>
 <div class="wrap">
+
+  <div id="toast" class="toast"></div>
 
   <div class="topbar">
     <div class="topbar-left">
@@ -478,9 +488,10 @@ document.getElementById('btnSubmit').onclick = async ()=>{
     });
     const result = await res.json();
     if(!res.ok || result.error) throw new Error(result.error || 'gagal simpan');
-    msg.textContent = 'Checksheet tersimpan ke database.';
-    msg.className = 'form-msg ok';
+    msg.textContent = '';
     resetForm();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    showToast('Checksheet tersimpan ke database.');
   }catch(e){
     msg.textContent = 'Gagal menyimpan data: ' + e.message;
     msg.className = 'form-msg err';
@@ -590,6 +601,13 @@ function renderHistory(){
 
 document.getElementById('filterModel').onchange = renderHistory;
 document.getElementById('searchHist').oninput = renderHistory;
+
+function showToast(text){
+  const toast = document.getElementById('toast');
+  toast.textContent = text;
+  toast.classList.add('show');
+  setTimeout(()=> toast.classList.remove('show'), 2800);
+}
 
 function resetForm(){
   document.getElementById('f_model').value = '';

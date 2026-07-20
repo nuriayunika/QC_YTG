@@ -194,7 +194,7 @@ foreach ($entries as $idx => $row) {
     ";
 }
 
-$html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>' . $css . '</style></head><body>' . implode('', $bodyParts) . '</body></html>';
+@ini_set('pcre.backtrack_limit', '50000000');
 
 $mpdf = new \Mpdf\Mpdf([
     'mode'          => 'utf-8',
@@ -206,7 +206,15 @@ $mpdf = new \Mpdf\Mpdf([
 ]);
 $mpdf->img_dpi = 96;
 $mpdf->SetTitle('Batch Checksheet - ' . count($entries) . ' unit');
-$mpdf->WriteHTML($html);
+
+// Tulis CSS sekali di awal
+$mpdf->WriteHTML('<style>' . $css . '</style>', \Mpdf\HTMLParserMode::HEADER_CSS);
+
+// Kirim HTML per-unit (potongan kecil), bukan digabung jadi satu string raksasa,
+// supaya tidak kena batas pcre.backtrack_limit walau jumlah unit banyak / foto besar.
+foreach ($bodyParts as $part) {
+    $mpdf->WriteHTML($part, \Mpdf\HTMLParserMode::HTML_BODY);
+}
 
 $filename = 'Batch_Checksheet_' . count($entries) . 'unit_' . date('Ymd_His') . '.pdf';
 $mpdf->Output($filename, 'D');

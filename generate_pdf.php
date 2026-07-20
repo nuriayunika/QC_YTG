@@ -223,6 +223,8 @@ function approval_card($label, $status, $by, $at) {
 <?php
 $html = ob_get_clean();
 
+@ini_set('pcre.backtrack_limit', '50000000');
+
 $mpdf = new \Mpdf\Mpdf([
     'mode'          => 'utf-8',
     'format'        => 'A4-L',
