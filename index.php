@@ -293,25 +293,6 @@ let totalItemCount = 0;
 CHECKLIST.forEach(c=> totalItemCount += c.items.length);
 document.getElementById('itemCount').textContent = totalItemCount + ' item checklist';
 
-function resizeImage(file, cb){
-  const img = new Image();
-  const reader = new FileReader();
-  reader.onload = (ev)=>{
-    img.onload = ()=>{
-      const maxW = 900;
-      const scale = Math.min(1, maxW / img.width);
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      cb(canvas.toDataURL('image/jpeg', 0.6));
-    };
-    img.src = ev.target.result;
-  };
-  reader.readAsDataURL(file);
-}
-
 function buildChecklistTable(){
   const body = document.getElementById('checklistBody');
   CHECKLIST.forEach(cat=>{
@@ -380,11 +361,9 @@ function buildPhotoSlots(){
     fileInput.onchange = (e)=>{
       const file = e.target.files[0];
       if(!file) return;
-      resizeImage(file, (dataUrl)=>{
-        photos[i] = dataUrl;
-        preview.src = dataUrl;
-        slot.classList.add('filled');
-      });
+      photos[i] = file;
+      preview.src = URL.createObjectURL(file);
+      slot.classList.add('filled');
     };
     clearBtn.onclick = ()=>{
       photos[i] = null;
@@ -459,32 +438,28 @@ document.getElementById('btnSubmit').onclick = async ()=>{
   const genNo = document.getElementById('f_gen_no').value.trim();
   const tanggal = document.getElementById('f_tanggal').value;
 
-  const entry = {
-    tanggal,
-    model,
-    voltage: document.getElementById('f_voltage').value,
-    frequency: document.getElementById('f_freq').value,
-    destination: document.getElementById('f_dest').value.trim(),
-    engine_model: document.getElementById('f_engine_model').value,
-    engine_no: engineNo,
-    generator_no: genNo,
-    frame_no: document.getElementById('f_frame_no').value.trim(),
-    remarks: document.getElementById('f_remarks').value.trim(),
-    items: {...state},
-    photos: photos.slice(),
-    created_at: Date.now()
-  };
-  const totalItems = Object.keys(state).length;
-  const filledItems = Object.values(state).filter(v=>v).length;
-  entry.status = filledItems === totalItems ? 'lengkap' : 'belum';
+  const formData = new FormData();
+  formData.append('tanggal', tanggal);
+  formData.append('model', model);
+  formData.append('voltage', document.getElementById('f_voltage').value);
+  formData.append('frequency', document.getElementById('f_freq').value);
+  formData.append('destination', document.getElementById('f_dest').value.trim());
+  formData.append('engine_model', document.getElementById('f_engine_model').value);
+  formData.append('engine_no', engineNo);
+  formData.append('generator_no', genNo);
+  formData.append('frame_no', document.getElementById('f_frame_no').value.trim());
+  formData.append('remarks', document.getElementById('f_remarks').value.trim());
+  formData.append('items', JSON.stringify(state));
+  photos.forEach((file, i)=>{
+    if(file) formData.append('photo_' + (i+1), file);
+  });
 
   const btn = document.getElementById('btnSubmit');
   btn.disabled = true;
   try{
     const res = await fetch('save_checksheet.php', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(entry)
+      body: formData
     });
     const result = await res.json();
     if(!res.ok || result.error) throw new Error(result.error || 'gagal simpan');

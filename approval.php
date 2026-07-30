@@ -1,64 +1,8 @@
 <?php
 require 'auth.php';
-require 'kirim_notif_email.php';
 require_role(['foreman', 'supervisor', 'manager']);
 
 $myRole = $current_user['role']; // foreman | supervisor | manager
-
-$msg = '';
-$msgType = '';
-
-// ============================================================
-// Proses aksi approve / reject
-// ============================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $entryId = (int) ($_POST['entry_id'] ?? 0);
-    $action  = $_POST['action'] ?? '';
-
-    $stmt = $pdo->prepare("SELECT * FROM checksheet_results WHERE id = :id");
-    $stmt->execute([':id' => $entryId]);
-    $entry = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$entry) {
-        $msg = 'Data tidak ditemukan.';
-        $msgType = 'err';
-    } else {
-        // Cek giliran sesuai urutan Foreman -> Supervisor -> Manager
-        $canAct = false;
-        if ($myRole === 'foreman' && $entry['foreman_status'] === 'pending') {
-            $canAct = true;
-        } elseif ($myRole === 'supervisor' && $entry['foreman_status'] === 'approved' && $entry['supervisor_status'] === 'pending') {
-            $canAct = true;
-        } elseif ($myRole === 'manager' && $entry['supervisor_status'] === 'approved' && $entry['manager_status'] === 'pending') {
-            $canAct = true;
-        }
-
-        if (!$canAct) {
-            $msg = 'Checksheet ini bukan giliran Anda untuk diproses.';
-            $msgType = 'err';
-        } elseif (!in_array($action, ['approve', 'reject'])) {
-            $msg = 'Aksi tidak valid.';
-            $msgType = 'err';
-        } else {
-            $status = $action === 'approve' ? 'approved' : 'rejected';
-            $sql = "UPDATE checksheet_results SET {$myRole}_status = :status, {$myRole}_by = :by, {$myRole}_at = NOW() WHERE id = :id";
-            $upd = $pdo->prepare($sql);
-            $upd->execute([
-                ':status' => $status,
-                ':by'     => $current_user['full_name'],
-                ':id'     => $entryId,
-            ]);
-
-            // Kirim notifikasi email ke role berikutnya, cuma kalau di-approve
-            if ($status === 'approved') {
-                notifApprovalChecksheet($pdo, $myRole, $entry, $current_user['full_name']);
-            }
-
-            $msg = 'Checksheet berhasil ' . ($action === 'approve' ? 'disetujui' : 'ditolak') . '.';
-            $msgType = 'ok';
-        }
-    }
-}
 
 // ============================================================
 // Ambil data
@@ -77,14 +21,15 @@ foreach ($master as $m) {
 
 function e($str) { return htmlspecialchars($str ?? '-', ENT_QUOTES); }
 
-function badge($status, $by, $at) {
+function badge($status, $by, $at, $reason = null) {
     if ($status === 'approved') {
         $sub = $by ? htmlspecialchars($by) . ($at ? ' &middot; ' . date('d/m/y H:i', strtotime($at)) : '') : '';
         return '<span class="badge approved">Approved</span><div class="badge-sub">' . $sub . '</div>';
     }
     if ($status === 'rejected') {
         $sub = $by ? htmlspecialchars($by) . ($at ? ' &middot; ' . date('d/m/y H:i', strtotime($at)) : '') : '';
-        return '<span class="badge rejected">Rejected</span><div class="badge-sub">' . $sub . '</div>';
+        $reasonHtml = $reason ? '<div class="badge-reason">"' . htmlspecialchars($reason) . '"</div>' : '';
+        return '<span class="badge rejected">Rejected</span><div class="badge-sub">' . $sub . '</div>' . $reasonHtml;
     }
     return '<span class="badge pending">Pending</span>';
 }
@@ -131,6 +76,7 @@ function badge($status, $by, $at) {
   .badge.approved{background:var(--green-bg);color:var(--green);}
   .badge.rejected{background:var(--red-bg);color:var(--red);}
   .badge-sub{font-size:10.5px;color:var(--text-dim);margin-top:3px;}
+  .badge-reason{font-size:10.5px;color:var(--red);margin-top:3px;font-style:italic;max-width:150px;}
   .badge-note{font-size:10.5px;color:var(--red);margin-top:2px;font-style:italic;}
 
   .action-btns{display:flex;gap:6px;flex-wrap:nowrap;white-space:nowrap;}
@@ -177,9 +123,7 @@ function badge($status, $by, $at) {
   </div>
 
   <div class="content-pad">
-    <?php if ($msg): ?>
-      <div class="form-msg <?php echo $msgType; ?>"><?php echo htmlspecialchars($msg); ?></div>
-    <?php endif; ?>
+    <div id="ajaxMsg" class="form-msg" style="display:none;"></div>
 
     <div class="card">
       <table class="appr">
@@ -209,26 +153,20 @@ function badge($status, $by, $at) {
               $filledPhotos = array_values(array_filter($photos));
               $rowId = 'row' . $r['id'];
           ?>
-          <tr>
+          <tr id="datarow-<?php echo $rowId; ?>">
             <td class="mono-cell"><?php echo e($r['tanggal']); ?></td>
             <td><?php echo e($r['model']); ?></td>
             <td class="mono-cell"><?php echo e($r['engine_no']); ?></td>
             <td class="mono-cell"><?php echo e($r['generator_no']); ?></td>
-            <td><?php echo badge($r['foreman_status'], $r['foreman_by'], $r['foreman_at']); ?></td>
-            <td><?php echo badge($r['supervisor_status'], $r['supervisor_by'], $r['supervisor_at']); ?></td>
-            <td><?php echo badge($r['manager_status'], $r['manager_by'], $r['manager_at']); ?></td>
-            <td>
+            <td id="badge-foreman-<?php echo $rowId; ?>"><?php echo badge($r['foreman_status'], $r['foreman_by'], $r['foreman_at'], $r['foreman_reject_reason']); ?></td>
+            <td id="badge-supervisor-<?php echo $rowId; ?>"><?php echo badge($r['supervisor_status'], $r['supervisor_by'], $r['supervisor_at'], $r['supervisor_reject_reason']); ?></td>
+            <td id="badge-manager-<?php echo $rowId; ?>"><?php echo badge($r['manager_status'], $r['manager_by'], $r['manager_at'], $r['manager_reject_reason']); ?></td>
+            <td id="action-<?php echo $rowId; ?>">
               <div class="action-btns">
                 <button type="button" class="btn-review" onclick="toggleDetail('<?php echo $rowId; ?>')">Review</button>
                 <?php if ($canAct): ?>
-                <form method="POST" onsubmit="return confirm('Yakin approve checksheet ini?');" style="display:inline;">
-                  <input type="hidden" name="entry_id" value="<?php echo $r['id']; ?>">
-                  <button type="submit" name="action" value="approve" class="btn-approve">Approve</button>
-                </form>
-                <form method="POST" onsubmit="return confirm('Yakin reject checksheet ini?');" style="display:inline;">
-                  <input type="hidden" name="entry_id" value="<?php echo $r['id']; ?>">
-                  <button type="submit" name="action" value="reject" class="btn-reject">Reject</button>
-                </form>
+                <button type="button" class="btn-approve" onclick="doApprove(<?php echo $r['id']; ?>, '<?php echo $rowId; ?>')">Approve</button>
+                <button type="button" class="btn-reject" onclick="doReject(<?php echo $r['id']; ?>, '<?php echo $rowId; ?>')">Reject</button>
                 <?php endif; ?>
               </div>
             </td>
@@ -296,6 +234,70 @@ function badge($status, $by, $at) {
 <script>
 function toggleDetail(rowId){
   document.getElementById('detail-'+rowId).classList.toggle('open');
+}
+
+const MY_ROLE = '<?php echo $myRole; ?>';
+
+function badgeHtml(status, by, at, reason){
+  if(status === 'approved'){
+    const sub = by ? (by + (at ? ' &middot; ' + at : '')) : '';
+    return '<span class="badge approved">Approved</span><div class="badge-sub">'+sub+'</div>';
+  }
+  if(status === 'rejected'){
+    const sub = by ? (by + (at ? ' &middot; ' + at : '')) : '';
+    const reasonHtml = reason ? '<div class="badge-reason">"'+reason+'"</div>' : '';
+    return '<span class="badge rejected">Rejected</span><div class="badge-sub">'+sub+'</div>'+reasonHtml;
+  }
+  return '<span class="badge pending">Pending</span>';
+}
+
+function showAjaxMsg(text, type){
+  const box = document.getElementById('ajaxMsg');
+  box.textContent = text;
+  box.className = 'form-msg ' + type;
+  box.style.display = 'block';
+  setTimeout(()=>{ box.style.display = 'none'; }, 4000);
+}
+
+async function sendApproval(entryId, rowId, action, reason){
+  try{
+    const res = await fetch('process_approve.php', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ entry_id: entryId, action: action, reason: reason || '' })
+    });
+    const result = await res.json();
+    if(result.status !== 'ok'){
+      showAjaxMsg(result.message || 'Gagal memproses.', 'err');
+      return;
+    }
+
+    // Update badge role yang bersangkutan, tanpa reload
+    document.getElementById('badge-'+MY_ROLE+'-'+rowId).innerHTML = badgeHtml(result.action, result.by, result.at, result.reason);
+
+    // Hilangkan tombol Approve/Reject, sisain Review aja
+    const actionCell = document.getElementById('action-'+rowId);
+    actionCell.innerHTML = '<div class="action-btns"><button type="button" class="btn-review" onclick="toggleDetail(\''+rowId+'\')">Review</button></div>';
+
+    showAjaxMsg('Checksheet berhasil ' + (action === 'approve' ? 'disetujui' : 'ditolak') + '.', 'ok');
+  }catch(e){
+    showAjaxMsg('Terjadi kesalahan koneksi.', 'err');
+  }
+}
+
+function doApprove(entryId, rowId){
+  if(!confirm('Yakin approve checksheet ini?')) return;
+  sendApproval(entryId, rowId, 'approve');
+}
+
+function doReject(entryId, rowId){
+  const reason = prompt('Alasan reject (wajib diisi):');
+  if(reason === null) return;
+  if(reason.trim() === ''){
+    alert('Alasan reject tidak boleh kosong.');
+    return;
+  }
+  sendApproval(entryId, rowId, 'reject', reason.trim());
 }
 </script>
 </body>

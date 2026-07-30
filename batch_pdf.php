@@ -1,6 +1,6 @@
 <?php
 require 'auth.php';
-require_role(['foreman', 'supervisor', 'manager']);
+require_role(['supervisor', 'manager']);
 
 $rows = $pdo->query("SELECT id, tanggal, model, engine_no, generator_no, destination FROM checksheet_results WHERE manager_status = 'approved' ORDER BY model, tanggal DESC")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -180,9 +180,24 @@ const rowChecks = document.querySelectorAll('.row-check');
 const sidebarEmpty = document.getElementById('sidebarEmpty');
 const sidebarList = document.getElementById('sidebarList');
 const btnDownload = document.getElementById('btnDownload');
+const STORAGE_KEY = 'batch_pdf_selected_ids';
+
+function saveSelectedToStorage(){
+  const ids = Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(ids)); }catch(e){}
+}
+
+function restoreSelectedFromStorage(){
+  try{
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    if(!Array.isArray(saved) || saved.length === 0) return;
+    rowChecks.forEach(cb => { if(saved.includes(cb.value)) cb.checked = true; });
+  }catch(e){}
+}
 
 function updateSidebar(){
   const checked = Array.from(document.querySelectorAll('.row-check:checked'));
+  saveSelectedToStorage();
   if (checked.length === 0) {
     sidebarEmpty.style.display = 'block';
     sidebarList.style.display = 'none';
@@ -197,6 +212,9 @@ function updateSidebar(){
   ).join('');
 }
 
+restoreSelectedFromStorage();
+updateSidebar();
+
 rowChecks.forEach(cb => cb.addEventListener('change', updateSidebar));
 
 document.getElementById('btnSelectAll').addEventListener('click', () => {
@@ -209,12 +227,13 @@ document.getElementById('btnSelectAll').addEventListener('click', () => {
 document.getElementById('btnClearAll').addEventListener('click', () => {
   rowChecks.forEach(cb => cb.checked = false);
   updateSidebar();
+  try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
 });
 
 btnDownload.addEventListener('click', () => {
   const ids = Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
   if (ids.length === 0) return;
-  window.open('generate_pdf_batch.php?ids=' + ids.join(','), '_blank');
+  window.location.href = 'generate_pdf_batch.php?ids=' + ids.join(',');
 });
 </script>
 </body>

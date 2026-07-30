@@ -1,27 +1,60 @@
 <?php
+require 'auth.php';
+require 'image_helper.php';
 header('Content-Type: application/json');
-require 'config.php';
 
-$data = json_decode(file_get_contents('php://input'), true);
+// ---- Ambil field teks biasa ----
+$tanggal      = $_POST['tanggal'] ?? '';
+$model        = $_POST['model'] ?? '';
+$voltage      = $_POST['voltage'] ?? '';
+$frequency    = $_POST['frequency'] ?? '';
+$destination  = $_POST['destination'] ?? '';
+$engine_model = $_POST['engine_model'] ?? '';
+$engine_no    = $_POST['engine_no'] ?? '';
+$generator_no = $_POST['generator_no'] ?? '';
+$frame_no     = $_POST['frame_no'] ?? '';
+$remarks      = $_POST['remarks'] ?? '';
+$itemsJson    = $_POST['items'] ?? '';
 
-if (!$data) {
-    http_response_code(400);
-    echo json_encode(['error' => 'Data tidak valid atau kosong.']);
-    exit;
-}
+$items = json_decode($itemsJson, true);
+if (!is_array($items)) $items = [];
 
-// Validasi minimal di server (jangan cuma percaya validasi di browser)
-$required = ['tanggal','model','voltage','frequency','destination','engine_no','generator_no','frame_no','items','photos'];
-foreach ($required as $field) {
-    if (!isset($data[$field]) || $data[$field] === '') {
+$required = [$tanggal, $model, $voltage, $frequency, $destination, $engine_no, $generator_no, $frame_no];
+foreach ($required as $val) {
+    if ($val === '') {
         http_response_code(400);
-        echo json_encode(['error' => "Field '$field' wajib diisi."]);
+        echo json_encode(['error' => 'Ada field wajib yang kosong.']);
         exit;
     }
 }
 
-// Hitung status: lengkap kalau semua item checklist terisi (bukan kosong)
-$items = $data['items'];
+// ---- Proses upload 5 foto ----
+$uploadDir = __DIR__ . '/uploads/checksheet/';
+if (!is_dir($uploadDir)) {
+    mkdir($uploadDir, 0755, true);
+}
+
+$photoPaths = [];
+for ($i = 1; $i <= 5; $i++) {
+    $key = 'photo_' . $i;
+    if (isset($_FILES[$key]) && $_FILES[$key]['error'] === UPLOAD_ERR_OK) {
+        $ext = 'jpg';
+        $filename = 'chk_' . date('Ymd_His') . '_' . $i . '_' . substr(md5(uniqid('', true)), 0, 8) . '.' . $ext;
+        $destPath = $uploadDir . $filename;
+
+        $saved = resizeAndSaveImage($_FILES[$key]['tmp_name'], $destPath, 1200, 75);
+        if ($saved) {
+            // simpan path RELATIF (dari folder project), biar gampang dipakai di <img> dan mPDF
+            $photoPaths[] = 'uploads/checksheet/' . basename($saved);
+        } else {
+            $photoPaths[] = null;
+        }
+    } else {
+        $photoPaths[] = null;
+    }
+}
+
+// Hitung status kelengkapan
 $totalItems = count($items);
 $filledItems = 0;
 foreach ($items as $v) {
@@ -30,26 +63,28 @@ foreach ($items as $v) {
 $status = ($filledItems === $totalItems && $totalItems > 0) ? 'lengkap' : 'belum';
 
 $sql = "INSERT INTO checksheet_results
-    (tanggal, model, voltage, frequency, destination, engine_model, engine_no, generator_no, frame_no, remarks, items, photos, status)
+    (tanggal, model, voltage, frequency, destination, engine_model, engine_no, generator_no, frame_no, remarks, items, photos, status, created_by_nik, created_by_name)
     VALUES
-    (:tanggal, :model, :voltage, :frequency, :destination, :engine_model, :engine_no, :generator_no, :frame_no, :remarks, :items, :photos, :status)";
+    (:tanggal, :model, :voltage, :frequency, :destination, :engine_model, :engine_no, :generator_no, :frame_no, :remarks, :items, :photos, :status, :created_by_nik, :created_by_name)";
 
 try {
     $stmt = $pdo->prepare($sql);
     $stmt->execute([
-        ':tanggal'      => $data['tanggal'],
-        ':model'        => $data['model'],
-        ':voltage'      => $data['voltage'],
-        ':frequency'    => $data['frequency'],
-        ':destination'  => $data['destination'],
-        ':engine_model' => $data['engine_model'] ?? null,
-        ':engine_no'    => $data['engine_no'],
-        ':generator_no' => $data['generator_no'],
-        ':frame_no'     => $data['frame_no'],
-        ':remarks'      => $data['remarks'] ?? '',
-        ':items'        => json_encode($items, JSON_UNESCAPED_UNICODE),
-        ':photos'       => json_encode($data['photos'], JSON_UNESCAPED_UNICODE),
-        ':status'       => $status,
+        ':tanggal'         => $tanggal,
+        ':model'           => $model,
+        ':voltage'         => $voltage,
+        ':frequency'       => $frequency,
+        ':destination'     => $destination,
+        ':engine_model'    => $engine_model,
+        ':engine_no'       => $engine_no,
+        ':generator_no'    => $generator_no,
+        ':frame_no'        => $frame_no,
+        ':remarks'         => $remarks,
+        ':items'           => json_encode($items, JSON_UNESCAPED_UNICODE),
+        ':photos'          => json_encode($photoPaths, JSON_UNESCAPED_UNICODE),
+        ':status'          => $status,
+        ':created_by_nik'  => $current_user['nik'],
+        ':created_by_name' => $current_user['full_name'],
     ]);
 
     echo json_encode(['success' => true, 'id' => $pdo->lastInsertId(), 'status' => $status]);
