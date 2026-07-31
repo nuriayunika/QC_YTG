@@ -125,6 +125,16 @@ function badge($status, $by, $at, $reason = null) {
   <div class="content-pad">
     <div id="ajaxMsg" class="form-msg" style="display:none;"></div>
 
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
+      <input type="text" id="searchApproval" placeholder="Cari engine no, model..." style="flex:1;min-width:220px;background:#fff;border:1px solid var(--border);color:var(--text);border-radius:5px;padding:9px 12px;font-size:13px;">
+      <select id="filterStatusApproval" style="background:#fff;border:1px solid var(--border);color:var(--text);border-radius:5px;padding:9px 12px;font-size:13px;">
+        <option value="">Semua status</option>
+        <option value="mine">Perlu tindakan saya</option>
+        <option value="rejected">Ada yang ditolak</option>
+        <option value="done">Sudah full approved</option>
+      </select>
+    </div>
+
     <div class="card">
       <table class="appr">
         <thead>
@@ -139,7 +149,7 @@ function badge($status, $by, $at, $reason = null) {
             <th style="width:260px;">Aksi</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="apprBody">
           <?php if (empty($rows)): ?>
           <tr><td colspan="8"><div class="empty-hint">Belum ada checksheet yang masuk.</div></td></tr>
           <?php else: foreach ($rows as $r):
@@ -153,7 +163,11 @@ function badge($status, $by, $at, $reason = null) {
               $filledPhotos = array_values(array_filter($photos));
               $rowId = 'row' . $r['id'];
           ?>
-          <tr id="datarow-<?php echo $rowId; ?>">
+          <tr id="datarow-<?php echo $rowId; ?>"
+              data-search="<?php echo e(strtolower($r['engine_no'].' '.$r['generator_no'].' '.$r['model'])); ?>"
+              data-canact="<?php echo $canAct ? '1' : '0'; ?>"
+              data-rejected="<?php echo ($r['foreman_status']==='rejected'||$r['supervisor_status']==='rejected'||$r['manager_status']==='rejected') ? '1' : '0'; ?>"
+              data-done="<?php echo $r['manager_status']==='approved' ? '1' : '0'; ?>">
             <td class="mono-cell"><?php echo e($r['tanggal']); ?></td>
             <td><?php echo e($r['model']); ?></td>
             <td class="mono-cell"><?php echo e($r['engine_no']); ?></td>
@@ -185,6 +199,12 @@ function badge($status, $by, $at, $reason = null) {
 
                 <?php if (!empty($r['remarks'])): ?>
                 <div style="color:var(--text-muted);margin-bottom:12px;font-size:13px;">Remarks: <span style="color:var(--text);"><?php echo nl2br(e($r['remarks'])); ?></span></div>
+                <?php endif; ?>
+
+                <?php if (!empty($r['last_edited_by_name'])): ?>
+                <div style="color:var(--amber);margin-bottom:12px;font-size:12px;font-style:italic;">
+                  &#9998; Terakhir diedit oleh <?php echo e($r['last_edited_by_name']); ?> &middot; <?php echo date('d/m/y H:i', strtotime($r['last_edited_at'])); ?>
+                </div>
                 <?php endif; ?>
 
                 <div class="detail-cat" style="margin-top:0;">Checklist Pemeriksaan</div>
@@ -228,6 +248,7 @@ function badge($status, $by, $at, $reason = null) {
           <?php endforeach; endif; ?>
         </tbody>
       </table>
+      <div id="apprPagination" style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;flex-wrap:wrap;gap:10px;"></div>
     </div>
   </div>
 </div>
@@ -235,6 +256,73 @@ function badge($status, $by, $at, $reason = null) {
 function toggleDetail(rowId){
   document.getElementById('detail-'+rowId).classList.toggle('open');
 }
+
+const searchBox = document.getElementById('searchApproval');
+const filterSel = document.getElementById('filterStatusApproval');
+
+const APPR_PAGE_SIZE = 50;
+let apprCurrentPage = 1;
+
+function applyApprovalFilter(){
+  const term = searchBox.value.trim().toLowerCase();
+  const status = filterSel.value;
+  const rows = document.querySelectorAll('#apprBody tr[id^="datarow-"]');
+  const matched = [];
+
+  rows.forEach(row=>{
+    let match = true;
+    if (term && !row.dataset.search.includes(term)) match = false;
+    if (status === 'mine' && row.dataset.canact !== '1') match = false;
+    if (status === 'rejected' && row.dataset.rejected !== '1') match = false;
+    if (status === 'done' && row.dataset.done !== '1') match = false;
+    if (match) matched.push(row);
+  });
+
+  const totalPages = Math.max(1, Math.ceil(matched.length / APPR_PAGE_SIZE));
+  if (apprCurrentPage > totalPages) apprCurrentPage = totalPages;
+  const startIdx = (apprCurrentPage - 1) * APPR_PAGE_SIZE;
+  const pageRows = matched.slice(startIdx, startIdx + APPR_PAGE_SIZE);
+
+  rows.forEach(row=>{
+    const show = pageRows.includes(row);
+    row.style.display = show ? '' : 'none';
+    const detailRow = row.nextElementSibling;
+    if (detailRow && detailRow.classList.contains('detail-row')) {
+      detailRow.style.display = show ? '' : 'none';
+    }
+  });
+
+  renderApprPagination(matched.length, totalPages);
+}
+
+function renderApprPagination(totalItems, totalPages){
+  const container = document.getElementById('apprPagination');
+  if(!container) return;
+  if(totalItems === 0){
+    container.innerHTML = '<span style="font-size:12.5px;color:var(--text-dim);">Tidak ada data yang cocok.</span>';
+    return;
+  }
+  const startIdx = (apprCurrentPage - 1) * APPR_PAGE_SIZE + 1;
+  const endIdx = Math.min(apprCurrentPage * APPR_PAGE_SIZE, totalItems);
+  container.innerHTML =
+    '<span style="font-size:12.5px;color:var(--text-muted);">Menampilkan '+startIdx+'-'+endIdx+' dari '+totalItems+' data</span>'+
+    '<div style="display:flex;gap:6px;">'+
+      '<button type="button" class="btn-review" id="btnApprPrev" '+(apprCurrentPage<=1?'disabled':'')+'>&larr; Sebelumnya</button>'+
+      '<span style="padding:6px 10px;font-size:12.5px;color:var(--text-muted);">Halaman '+apprCurrentPage+' / '+totalPages+'</span>'+
+      '<button type="button" class="btn-review" id="btnApprNext" '+(apprCurrentPage>=totalPages?'disabled':'')+'>Selanjutnya &rarr;</button>'+
+    '</div>';
+
+  const prevBtn = document.getElementById('btnApprPrev');
+  const nextBtn = document.getElementById('btnApprNext');
+  if(prevBtn) prevBtn.onclick = ()=>{ apprCurrentPage--; applyApprovalFilter(); };
+  if(nextBtn) nextBtn.onclick = ()=>{ apprCurrentPage++; applyApprovalFilter(); };
+}
+
+if (searchBox) {
+  searchBox.addEventListener('input', ()=>{ apprCurrentPage = 1; applyApprovalFilter(); });
+  filterSel.addEventListener('change', ()=>{ apprCurrentPage = 1; applyApprovalFilter(); });
+}
+applyApprovalFilter();
 
 const MY_ROLE = '<?php echo $myRole; ?>';
 

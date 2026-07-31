@@ -3,7 +3,7 @@ session_start();
 require 'config.php';
 
 if (isset($_SESSION['user_id'])) {
-    header('Location: ' . ($_SESSION['role'] === 'operator' ? 'index.php' : 'approval.php'));
+    header('Location: ' . ($_SESSION['role'] === 'operator' ? 'index.php' : ($_SESSION['role'] === 'admin' ? 'manage_users.php' : 'approval.php')));
     exit();
 }
 
@@ -20,12 +20,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([':nik' => $nik]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if ($user && $password === $user['password']) {
+        if ($user && !$user['is_active']) {
+            $error = 'Akun Anda sudah dinonaktifkan. Hubungi administrator.';
+        } elseif ($user && $password === $user['password']) {
             $_SESSION['user_id']   = $user['id'];
             $_SESSION['nik']       = $user['nik'];
             $_SESSION['full_name'] = $user['full_name'];
             $_SESSION['role']      = $user['role'];
-            header('Location: ' . ($user['role'] === 'operator' ? 'index.php' : 'approval.php'));
+            header('Location: ' . ($user['role'] === 'operator' ? 'index.php' : ($user['role'] === 'admin' ? 'manage_users.php' : 'approval.php')));
             exit();
         } else {
             $error = 'NIK atau password salah.';

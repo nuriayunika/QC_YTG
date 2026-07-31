@@ -21,6 +21,7 @@ function role_label($role) {
         'foreman'    => 'Foreman',
         'supervisor' => 'Supervisor',
         'manager'    => 'Manager',
+        'admin'      => 'Admin',
     ];
     return $map[$role] ?? $role;
 }
@@ -32,6 +33,8 @@ function require_role($allowedRoles) {
     if (!in_array($current_user['role'], $allowedRoles)) {
         if ($current_user['role'] === 'operator') {
             header('Location: index.php');
+        } elseif ($current_user['role'] === 'admin') {
+            header('Location: manage_users.php');
         } else {
             header('Location: approval.php');
         }

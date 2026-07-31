@@ -1,6 +1,11 @@
 <?php
 require 'auth.php';
 require_role(['operator']);
+
+$rejectedCount = $pdo->query("
+    SELECT COUNT(*) FROM checksheet_results
+    WHERE foreman_status = 'rejected' OR supervisor_status = 'rejected' OR manager_status = 'rejected'
+")->fetchColumn();
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -174,10 +179,20 @@ require_role(['operator']);
       <button class="tab-btn" data-tab="hist">Histori</button>
     </div>
     <div class="topbar-right">
+      <a href="edit_checksheet.php" style="color:#F1D9DD;text-decoration:none;background:rgba(255,255,255,0.1);padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;margin-right:8px;">Edit Checksheet</a>
       <span style="margin-right:12px;"><?php echo htmlspecialchars($current_user['full_name']); ?> &middot; <?php echo role_label($current_user['role']); ?></span>
       <a href="logout.php" style="color:#F1D9DD;text-decoration:none;background:rgba(255,255,255,0.1);padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;">Logout</a>
     </div>
   </div>
+
+  <?php if ($rejectedCount > 0): ?>
+  <div style="background:#FBEAEA;border-bottom:1px solid #F3C6C6;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+    <span style="color:#C0362C;font-size:13.5px;font-weight:600;">
+      &#9888; Ada <?php echo $rejectedCount; ?> checksheet yang ditolak dan perlu diperbaiki.
+    </span>
+    <a href="edit_checksheet.php" style="background:#C0362C;color:#fff;text-decoration:none;padding:7px 16px;border-radius:6px;font-size:12.5px;font-weight:600;">Lihat &amp; Perbaiki</a>
+  </div>
+  <?php endif; ?>
 
   <div id="tab-input">
     <div class="content-pad">
@@ -255,6 +270,7 @@ require_role(['operator']);
           <tbody id="histBody"></tbody>
         </table>
         <div id="histEmpty"></div>
+        <div id="histPagination" style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;flex-wrap:wrap;gap:10px;"></div>
       </div>
     </div>
   </div>
@@ -262,36 +278,10 @@ require_role(['operator']);
 </div>
 
 <script>
-const MODEL_MAP = {
-  "YTG 5.0 SE":"TF90M-E2GN","YTG 5.0 SM":"TF90M-GN",
-  "YTG 6.5 SE":"TF120M-E2GN","YTG 6.5 SM":"TF120M-GN",
-  "YTG 6.5 TE":"TF90M-E2GN","YTG 6.5 TM":"TF90M-GN",
-  "YTG 10 SE":"TF160-E2GN","YTG 10 SM":"TF160-GN",
-  "YTG 9 TE":"TF120M-E2GN","YTG 9 TM":"TF120M-GN",
-  "YTG 12.5 TE":"TF160-E2GN","YTG 12.5 TM":"TF160-GN",
-  "YTG 15 TE":"TS190R2-EGN","YTG 15 TM":"TS190R2-GN"
-};
-
-const CHECKLIST = [
-  {no:1, title:"Welding", items:["Common Bed","Frame"]},
-  {no:2, title:"Painting", items:["Common Bed","Frame"]},
-  {no:3, title:"Engine Mounting", items:["Tightening Bolt 250 KGF.M","Engine Mounting"]},
-  {no:4, title:"Tightening Bolt", items:["Engine Bolt","Generator Bolt","Stoper Bolt"]},
-  {no:5, title:"Panel Box", items:["Tightening Bolt","Amp Meter","Volt Meter","No Fuse Bracker","Pilot Lamp","Output Terminal","Sticker"]},
-  {no:6, title:"Cover Belt", items:["Tightening Bolt","Sticker Starter-Electric","Caution Sticker"]},
-  {no:7, title:"Starting", items:["Manual","Cable Electric","Electric"]},
-  {no:8, title:"Sticker", items:["Engine Sticker","Generator Sticker","Caution V-Belt","Caution Electric","Caution Engine"]},
-  {no:9, title:"Tool Set", items:["Fuel Oil Filter (1 Pc)","Cogged V-Belt Radiator (1 Pc)","Wrench 10-12 (1 Pc)","Wrench 14-17 (1 Pc)","Wrench 19-22 (1 Pc)","Driver (-) (+) (1 Pc)","Manual Book Altern (1 Pc)","Manual Book Engine (1 Pc)"]},
-  {no:10, title:"Accessories", items:["Hex Bolt M10 x 20 (16 Pcs)","Spring Washer (16 Pcs)","Flange Washer (16 Pcs)","Wing Nut M10 (2 Pcs)","Rubber Wheel (4 Pcs)","Bolt Clamp Accu (2 Pcs)","Clamp Accu (1 Pc)","Cup YTG (1 Pc)","Jacket (1 Pc)"]},
-  {no:11, title:"Alternator", items:["Cutting Merk Mecc Alte"]},
-  {no:12, title:"V-Belt Engine", items:["Perpendicularity"]},
-  {no:13, title:"Tension Belt", items:["Inside","Middle","Outside"]}
-];
+let MODEL_MAP = {};
+let CHECKLIST = [];
 
 const state = {};
-let totalItemCount = 0;
-CHECKLIST.forEach(c=> totalItemCount += c.items.length);
-document.getElementById('itemCount').textContent = totalItemCount + ' item checklist';
 
 function buildChecklistTable(){
   const body = document.getElementById('checklistBody');
@@ -336,7 +326,6 @@ function buildChecklistTable(){
     });
   });
 }
-buildChecklistTable();
 
 const photos = [null,null,null,null,null];
 function buildPhotoSlots(){
@@ -373,24 +362,48 @@ function buildPhotoSlots(){
     };
   }
 }
-buildPhotoSlots();
 
 function updateProgress(){
   const keys = Object.keys(state);
   const filled = keys.filter(k=>state[k]).length;
   document.getElementById('progressNote').textContent = filled+' / '+keys.length+' item terisi';
 }
-updateProgress();
 
 const modelSel = document.getElementById('f_model');
-Object.keys(MODEL_MAP).forEach(m=>{
-  const opt = document.createElement('option');
-  opt.value = m; opt.textContent = m;
-  modelSel.appendChild(opt);
-});
+function populateModelDropdown(){
+  Object.keys(MODEL_MAP).forEach(m=>{
+    const opt = document.createElement('option');
+    opt.value = m; opt.textContent = m;
+    modelSel.appendChild(opt);
+  });
+}
 modelSel.onchange = ()=>{
   document.getElementById('f_engine_model').value = MODEL_MAP[modelSel.value] || '';
 };
+
+async function initFormData(){
+  document.getElementById('itemCount').textContent = 'Memuat...';
+  try{
+    const [modelsRes, checklistRes] = await Promise.all([
+      fetch('get_models.php'),
+      fetch('get_checklist_master.php')
+    ]);
+    MODEL_MAP = await modelsRes.json();
+    CHECKLIST = await checklistRes.json();
+
+    let totalItemCount = 0;
+    CHECKLIST.forEach(c=> totalItemCount += c.items.length);
+    document.getElementById('itemCount').textContent = totalItemCount + ' item checklist';
+
+    populateModelDropdown();
+    buildChecklistTable();
+    buildPhotoSlots();
+    updateProgress();
+  }catch(e){
+    document.getElementById('itemCount').textContent = 'Gagal memuat data master.';
+  }
+}
+const initFormDataPromise = initFormData();
 
 const today = new Date();
 today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
@@ -482,6 +495,7 @@ async function loadHistory(){
   const empty = document.getElementById('histEmpty');
   body.innerHTML = '';
   empty.innerHTML = '<div class="empty-hint">Memuat data...</div>';
+  await initFormDataPromise;
   try{
     const res = await fetch('list_checksheet.php');
     const entries = await res.json();
@@ -507,6 +521,9 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+const PAGE_SIZE = 50;
+let currentPage = 1;
+
 function renderHistory(){
   const body = document.getElementById('histBody');
   const empty = document.getElementById('histEmpty');
@@ -523,10 +540,17 @@ function renderHistory(){
   body.innerHTML = '';
   if(filtered.length === 0){
     empty.innerHTML = '<div class="empty-hint">Tidak ada data yang cocok dengan filter.</div>';
+    renderPagination(0, 0);
     return;
   }
   empty.innerHTML = '';
-  filtered.forEach(e=>{
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  if (currentPage > totalPages) currentPage = totalPages;
+  const startIdx = (currentPage - 1) * PAGE_SIZE;
+  const pageItems = filtered.slice(startIdx, startIdx + PAGE_SIZE);
+
+  pageItems.forEach(e=>{
     const row = document.createElement('tr');
     row.className = 'hrow';
     row.innerHTML =
@@ -572,10 +596,35 @@ function renderHistory(){
     body.appendChild(row);
     body.appendChild(detailRow);
   });
+
+  renderPagination(filtered.length, totalPages);
 }
 
-document.getElementById('filterModel').onchange = renderHistory;
-document.getElementById('searchHist').oninput = renderHistory;
+function renderPagination(totalItems, totalPages){
+  const container = document.getElementById('histPagination');
+  if(!container) return;
+  if(totalItems === 0){
+    container.innerHTML = '';
+    return;
+  }
+  const startIdx = (currentPage - 1) * PAGE_SIZE + 1;
+  const endIdx = Math.min(currentPage * PAGE_SIZE, totalItems);
+  container.innerHTML =
+    '<span style="font-size:12.5px;color:var(--text-muted);">Menampilkan '+startIdx+'-'+endIdx+' dari '+totalItems+' data</span>'+
+    '<div style="display:flex;gap:6px;">'+
+      '<button type="button" class="btn-ghost" id="btnPrevPage" '+(currentPage<=1?'disabled':'')+' style="padding:6px 12px;font-size:12px;">&larr; Sebelumnya</button>'+
+      '<span style="padding:6px 10px;font-size:12.5px;color:var(--text-muted);">Halaman '+currentPage+' / '+totalPages+'</span>'+
+      '<button type="button" class="btn-ghost" id="btnNextPage" '+(currentPage>=totalPages?'disabled':'')+' style="padding:6px 12px;font-size:12px;">Selanjutnya &rarr;</button>'+
+    '</div>';
+
+  const prevBtn = document.getElementById('btnPrevPage');
+  const nextBtn = document.getElementById('btnNextPage');
+  if(prevBtn) prevBtn.onclick = ()=>{ currentPage--; renderHistory(); };
+  if(nextBtn) nextBtn.onclick = ()=>{ currentPage++; renderHistory(); };
+}
+
+document.getElementById('filterModel').onchange = ()=>{ currentPage = 1; renderHistory(); };
+document.getElementById('searchHist').oninput = ()=>{ currentPage = 1; renderHistory(); };
 
 function showToast(text){
   const toast = document.getElementById('toast');
